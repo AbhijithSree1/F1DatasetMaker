@@ -1,0 +1,31 @@
+# Default configuration for the F1DatasetMaker pipeline.
+# Override any of these by pointing F1DATASET_CONFIG at a different file.
+
+seasons:
+  start: 2018   # FastF1 telemetry coverage begins in 2018
+  end: 2026     # current season; the pipeline clamps this to the latest completed event
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  fastf1_cache_dir: data/.fastf1_cache
+
+openf1:
+  base_url: "https://api.openf1.org/v1"
+  min_season: 2023   # OpenF1 only has data from the 2023 season onward
+  request_timeout: 30
+  max_retries: 5
+  retry_backoff_seconds: 2
+
+fastf1:
+  min_season: 2018
+
+sessions:
+  # FastF1 session identifiers to ingest per race weekend
+  include:
+    - "FP1"
+    - "FP2"
+    - "FP3"
+    - "Q"
+    - "R"
+    - "Sprint"

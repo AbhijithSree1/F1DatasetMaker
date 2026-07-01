@@ -1,0 +1,46 @@
+name: Update F1 dataset
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC - covers the usual Sunday race day for every timezone.
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache FastF1 HTTP cache
+        uses: actions/cache@v4
+        with:
+          path: data/.fastf1_cache
+          key: fastf1-cache-${{ github.run_id }}
+          restore-keys: fastf1-cache-
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Ingest new sessions
+        run: f1dataset update -v
+
+      - name: Build feature tables
+        run: f1dataset build-features -v
+
+      - name: Commit updated dataset
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/processed
+          git diff --cached --quiet && echo "No dataset changes." && exit 0
+          git commit -m "chore: update F1 dataset $(date -u +%Y-%m-%d)"
+          git push
