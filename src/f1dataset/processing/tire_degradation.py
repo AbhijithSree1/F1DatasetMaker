@@ -22,15 +22,17 @@ REQUIRED_COLUMNS = {
     "deleted",
     "pit_out_lap",
     "pit_in_lap",
+    "track_status",
 }
 
 
 def build_tire_degradation_table(laps: pd.DataFrame) -> pd.DataFrame:
     """Compute per-lap tire degradation features from canonical lap data.
 
-    Filters out deleted laps and in/out laps (which aren't representative of
-    green-flag pace), then for every (session, driver, stint) computes the
-    stint's best clean lap time and each lap's delta to it.
+    Filters out deleted laps, in/out laps, and safety-car/VSC laps (none of
+    which are representative of green-flag tire-wear pace), then for every
+    (session, driver, stint) computes the stint's best clean lap time and
+    each lap's delta to it.
     """
     missing = REQUIRED_COLUMNS - set(laps.columns)
     if missing:
@@ -40,6 +42,7 @@ def build_tire_degradation_table(laps: pd.DataFrame) -> pd.DataFrame:
         (~laps["deleted"].astype(bool))
         & (~laps["pit_out_lap"].astype(bool))
         & (~laps["pit_in_lap"].astype(bool))
+        & (laps["track_status"] == "green")
         & laps["lap_time_s"].notna()
     ].copy()
 

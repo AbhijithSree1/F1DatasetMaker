@@ -19,12 +19,18 @@ time & race strategy prediction, and tire degradation models.**
 - **Language/stack:** Python 3.11, `fastf1`, `requests`, `pandas`/`pyarrow`,
   `typer` CLI, `tenacity` for retries.
 
-## Status: Phase 0 complete (this commit)
+## Status
 
-Repo scaffolding, working ingestion clients, canonical schema definitions,
-one fully-implemented processing module (tire degradation) as the reference
-pattern, CLI, tests, and the scheduled-update workflow skeleton are in
-place. Everything below is the remaining roadmap.
+Phases 0, 3, 4, and 8 (dashboard) are complete. Phase 2's raw-source
+normalizers are written and unit-tested but **not yet run against real
+ingested data** — this dev environment has no outbound network access to
+OpenF1/FastF1, so everything downstream of ingestion (feature tables,
+quality report, dashboard) has so far only been exercised against
+`sample_data.generate_race_weekend()`, a synthetic race weekend built
+directly in the canonical schema. The normalize/build-features code path
+for *real* raw data (`f1dataset build-features`) is implemented and unit
+tested with mocked FastF1/OpenF1-shaped frames, but needs a real backfill
+run (e.g. in CI, which has network access) to validate end-to-end.
 
 ---
 
@@ -47,13 +53,27 @@ place. Everything below is the remaining roadmap.
 
 ## Phase 2 — Normalization & entity resolution
 
-- [ ] Build canonical `sessions`, `drivers` tables (see
-      `schemas/tables.py`) by merging FastF1 + OpenF1 metadata, keyed by the
-      ids in `processing/normalize.py`
-- [ ] Reconcile driver/team identity across seasons (number reuse, team name
-      changes e.g. Alfa Romeo -> Sauber -> Audi)
-- [ ] Unify units (km/h vs mph, Celsius, seconds vs lap-relative timestamps)
-      between the two sources
+- [x] `build_sessions_table` / `build_drivers_table` / `build_teams_table`:
+      canonical reference tables from raw FastF1 metadata
+      (`processing/normalize.py`)
+- [x] `normalize_fastf1_laps` / `normalize_fastf1_telemetry` /
+      `normalize_fastf1_weather` / `normalize_fastf1_results`: raw FastF1 ->
+      canonical schema, unit tested against mocked FastF1-shaped frames
+- [x] `normalize_openf1_stints` / `normalize_openf1_pit`: raw OpenF1 ->
+      canonical schema; `derive_stints_from_laps` fallback for pre-2023
+      seasons without OpenF1 stint data
+- [x] `raw_loader.load_raw_tables`: tags every raw row with
+      season/round/session from its directory path (authoritative
+      regardless of what the source API called things) so normalization
+      doesn't need per-source special-casing
+- [ ] **Not yet validated against real data** (no network in this
+      environment) — run `f1dataset backfill && f1dataset build-features`
+      somewhere with network access and fix whatever the real FastF1/OpenF1
+      responses inevitably don't match exactly (column name drift, dtype
+      surprises, etc.)
+- [ ] Reconcile driver/team identity across *seasons* (number reuse, team
+      name changes e.g. Alfa Romeo -> Sauber -> Audi) — current ids are
+      season-scoped by design, cross-season joins are a follow-up
 - [ ] Session-key matching between FastF1 (year+round+identifier) and OpenF1
       (session_key) is currently done by session-name + circuit-location
       heuristic (`pipeline._lookup_openf1_session_key`) — validate this
@@ -61,29 +81,39 @@ place. Everything below is the remaining roadmap.
 
 ## Phase 3 — Feature engineering per model family
 
-- [x] **Tire degradation** (reference implementation,
-      `processing/tire_degradation.py`): stint-relative lap time delta,
-      tire age, compound, stint lap index
-- [ ] **Vehicle/telemetry models**: resample telemetry onto a common
-      distance basis per corner/straight, derive acceleration/braking
-      g-force proxies, gear-shift points, DRS-zone usage, per-corner speed
-      traces
-- [ ] **Driver behavior models**: braking distance from corner apex,
-      throttle-application smoothness, lap-to-lap consistency (variance),
-      teammate delta under matched conditions, qualifying-vs-race pace gap
-- [ ] **Lap time / strategy models**: full lap table joined with
-      tire/stint/weather/track-status/safety-car flags, suitable for
-      lap-time or pit-strategy prediction
-- [ ] `build-features` CLI command wired up to actually run these (currently
-      a placeholder)
+All four feature tables are implemented in `src/f1dataset/processing/` and
+wired into `f1dataset.features.build_all_features`, which both `f1dataset
+demo` and `f1dataset build-features` call:
+
+- [x] **Tire degradation** (`tire_degradation.py`): stint-relative lap time
+      delta, tire age, compound, stint lap index — excludes deleted/pit/
+      safety-car laps so degradation isn't polluted by caution-period pace
+- [x] **Vehicle/telemetry models** (`vehicle_telemetry.py`): per-lap top
+      speed, throttle/brake/DRS/gear-shift summary, plus
+      `build_distance_trace` for compact distance-binned traces (used by
+      the dashboard's telemetry comparison page)
+- [x] **Driver behavior models** (`driver_behavior.py`): green-flag-only
+      lap-time consistency (std dev), pace rank, teammate delta, braking/
+      throttle tendencies
+- [x] **Lap time / strategy models** (`lap_strategy.py`): every lap joined
+      with the nearest weather sample and pit-stop duration, keeping the
+      compound/tyre-age/track-status columns already on `laps`
+- [x] `build-features` CLI command runs the full pipeline: raw Parquet ->
+      normalize -> feature tables -> Parquet + dashboard JSON
 
 ## Phase 4 — Data quality & validation
 
-- [ ] Schema conformance checks against `schemas/tables.py` (e.g. via
-      `pandera`) run in CI on every processed-table change
-- [ ] Per-season coverage report (sessions ingested vs. scheduled, null
-      rates per column)
-- [ ] Outlier/sanity checks (e.g. impossible speeds, negative lap times)
+- [x] Schema conformance checks against `schemas/tables.py`
+      (`processing/data_quality.build_schema_report`) — missing/extra
+      columns and per-column null rates, run automatically by `demo` /
+      `build-features` and surfaced on the dashboard's Data Quality page
+- [x] Sanity/range checks (`run_sanity_checks`): positive lap times, sectors
+      sum to lap time, speed/throttle/temperature ranges, unique finishing
+      positions per session
+- [ ] Per-season coverage report (sessions ingested vs. scheduled) — needs
+      a real backfill to be meaningful
+- [ ] `pandera`/CI integration to fail a workflow run on regressions, rather
+      than just printing a summary
 
 ## Phase 5 — Automation
 
@@ -114,6 +144,30 @@ prove the dataset is actually usable for what it was built for:
   features)
 - Tire degradation regression per compound/circuit
 - Driver style clustering from braking/throttle telemetry features
+
+## Phase 8 — Interactive dashboard
+
+- [x] `dashboard/`: React + TypeScript + Vite + Tailwind + Recharts SPA,
+      dark F1-themed UI, reads static JSON from `dashboard/public/data/`
+      (no backend) written by `f1dataset.dashboard_export`
+- [x] Overview (standings, podium, fastest lap, position-by-lap), Lap Times
+      & Strategy (lap evolution with SC shading, tire-stint Gantt, pit
+      stops), Telemetry (two-driver speed/throttle/brake/gear overlay +
+      time-delta trace), Driver Behavior, Tire Degradation, and Data
+      Quality pages
+- [x] Header banner clearly flags synthetic vs. real data
+      (`meta.json.synthetic`)
+- [x] Verified with a headless-browser pass across all six routes (zero
+      console errors) after fixing two real rendering bugs found that way:
+      a clipped Y-axis label (lap-time axis needed more width) and a
+      `'dataMax + N'` domain-string that recharts wasn't parsing correctly
+      when mixed with a literal `0` (replaced with an explicit computed
+      domain)
+- [ ] Code-split the bundle (currently one ~680kB JS chunk) if the app
+      grows further
+- [ ] Point the dashboard at a specific season/round once multiple events
+      are ingested (currently assumes a single session pair, matching what
+      `demo`/`build-features` produce today)
 
 ---
 

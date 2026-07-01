@@ -38,8 +38,18 @@ def backfill_season(season: int, settings: Settings) -> None:
     openf1_client = OpenF1Client(settings.openf1) if season >= settings.openf1.min_season else None
 
     schedule = fastf1_client.get_event_schedule(season)
+    _save_schedule(schedule, season, settings)
     for _, event in schedule.iterrows():
         _ingest_event(season, event, settings, openf1_client)
+
+
+def _save_schedule(schedule: pd.DataFrame, season: int, settings: Settings) -> None:
+    """Cache the event schedule alongside the raw data so `build-features`
+    can reconstruct session metadata (circuit/country/event name) without
+    needing network access again."""
+    season_dir = settings.raw_dir / f"season={season}"
+    season_dir.mkdir(parents=True, exist_ok=True)
+    _save(schedule, season_dir / "schedule.parquet")
 
 
 def update_latest(settings: Settings) -> None:
@@ -56,6 +66,7 @@ def update_latest(settings: Settings) -> None:
 
     now = pd.Timestamp.now(tz="UTC")
     schedule = fastf1_client.get_event_schedule(season)
+    _save_schedule(schedule, season, settings)
     for _, event in schedule.iterrows():
         event_date = event.get("EventDate")
         if pd.isna(event_date) or pd.Timestamp(event_date, tz="UTC") > now:

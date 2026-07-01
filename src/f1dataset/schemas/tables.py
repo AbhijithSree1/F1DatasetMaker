@@ -124,4 +124,17 @@ PIT_STOPS = TableSchema(
     },
 )
 
-ALL_TABLES = [SESSIONS, DRIVERS, LAPS, TELEMETRY, STINTS, WEATHER, PIT_STOPS]
+RESULTS = TableSchema(
+    name="results",
+    columns={
+        "session_id": "FK -> sessions.session_id",
+        "driver_id": "FK -> drivers.driver_id",
+        "position": "Classified finishing position (1 = first)",
+        "grid_position": "Starting position (race) or session-relative rank (qualifying)",
+        "status": "Finished / Retired / Disqualified / ...",
+        "points": "Championship points scored in this session",
+        "total_time_s": "Total race time (race) or best lap time (qualifying), seconds",
+    },
+)
+
+ALL_TABLES = [SESSIONS, DRIVERS, LAPS, TELEMETRY, STINTS, WEATHER, PIT_STOPS, RESULTS]

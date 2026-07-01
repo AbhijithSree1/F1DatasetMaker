@@ -14,6 +14,7 @@ def _laps(rows: list[dict]) -> pd.DataFrame:
         "deleted": False,
         "pit_out_lap": False,
         "pit_in_lap": False,
+        "track_status": "green",
     }
     return pd.DataFrame([{**defaults, **row} for row in rows])
 
@@ -64,6 +65,20 @@ def test_separates_stints():
     stint2_best = out.loc[out["stint_number"] == 2, "stint_best_lap_s"].unique()
     assert list(stint1_best) == [89.0]
     assert list(stint2_best) == [88.0]
+
+
+def test_excludes_safety_car_laps():
+    laps = _laps(
+        [
+            {"lap_number": 1, "lap_time_s": 90.0},
+            {"lap_number": 2, "lap_time_s": 150.0, "track_status": "SC"},
+            {"lap_number": 3, "lap_time_s": 91.0},
+        ]
+    )
+
+    out = build_tire_degradation_table(laps)
+
+    assert list(out["lap_number"]) == [1, 3]
 
 
 def test_missing_required_column_raises():
