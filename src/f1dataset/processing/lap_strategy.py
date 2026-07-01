@@ -40,11 +40,14 @@ def build_lap_strategy_table(laps: pd.DataFrame, weather: pd.DataFrame, pit_stop
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
     df = laps.sort_values(["session_id", "driver_id", "lap_number"]).copy()
+    # Reconstruct each lap's start time as the running sum of prior lap times.
+    # Real laps have null lap_time_s (in/out/deleted laps); treat those as 0
+    # duration for the clock so every row gets a non-null key -- merge_asof
+    # rejects null keys. The real lap_time_s column (with its NaNs) is untouched.
+    clock = df["lap_time_s"].fillna(0.0)
     df["lap_start_time_s"] = (
-        df.groupby(["session_id", "driver_id"])["lap_time_s"].cumsum() - df["lap_time_s"]
-    )
-
-    df["lap_start_time_s"] = df["lap_start_time_s"].astype(float)
+        clock.groupby([df["session_id"], df["driver_id"]]).cumsum() - clock
+    ).astype(float)
     weather = weather.assign(time_s=weather["time_s"].astype(float))
 
     joined_parts = []

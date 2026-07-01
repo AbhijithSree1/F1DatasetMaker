@@ -56,12 +56,17 @@ def _quali_session_id(tables: dict[str, pd.DataFrame]) -> str | None:
 
 
 def _build_meta(tables: dict[str, pd.DataFrame], driver_info: pd.DataFrame, synthetic: bool) -> dict:
+    # For real data, label the header from the actual race session; the
+    # synthetic constants only apply to the demo weekend. Track geometry
+    # (length/DRS/speed profile) below stays synthetic -- real circuit
+    # geometry isn't in the dataset, so it's a placeholder for real runs.
+    race = tables["sessions"].set_index("session_id").loc[_race_session_id(tables)]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "synthetic": synthetic,
-        "event_name": EVENT_NAME,
-        "circuit": CIRCUIT,
-        "country": COUNTRY,
+        "event_name": EVENT_NAME if synthetic else (race.get("event_name") or race.get("circuit")),
+        "circuit": CIRCUIT if synthetic else race.get("circuit"),
+        "country": COUNTRY if synthetic else race.get("country"),
         "track": {
             "length_m": TRACK_LENGTH_M,
             "drs_zones": [{"start_m": s, "end_m": e} for s, e in DRS_ZONES],
@@ -87,8 +92,11 @@ def _build_overview(tables: dict[str, pd.DataFrame], driver_info: pd.DataFrame) 
     fastest_driver = driver_info.set_index("driver_id").loc[fastest["driver_id"]]
 
     race_laps_sorted = race_laps.sort_values(["driver_id", "lap_number"])
+    # Null lap times (in/out/deleted laps) would make cum_time_s NaN and break
+    # the integer position rank below; treat them as 0 for the running clock.
+    clock = race_laps_sorted["lap_time_s"].fillna(0.0)
     race_laps_sorted = race_laps_sorted.assign(
-        cum_time_s=race_laps_sorted.groupby("driver_id")["lap_time_s"].cumsum()
+        cum_time_s=clock.groupby(race_laps_sorted["driver_id"]).cumsum()
     )
     race_laps_sorted["position"] = race_laps_sorted.groupby("lap_number")["cum_time_s"].rank(method="first").astype(int)
     position_by_lap = race_laps_sorted[["lap_number", "driver_id", "position"]].merge(

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 from f1dataset.config import Settings
 from f1dataset.ingestion import fastf1_client
@@ -129,12 +130,25 @@ def _ingest_session(
         )
         return
 
-    _save(openf1_client.get_laps(session_key), out_dir / "openf1_laps.parquet")
-    _save(openf1_client.get_car_data(session_key), out_dir / "openf1_car_data.parquet")
-    _save(openf1_client.get_stints(session_key), out_dir / "openf1_stints.parquet")
-    _save(openf1_client.get_pit(session_key), out_dir / "openf1_pit.parquet")
-    _save(openf1_client.get_weather(session_key), out_dir / "openf1_weather.parquet")
-    _save(openf1_client.get_race_control(session_key), out_dir / "openf1_race_control.parquet")
+    # OpenF1's car_data is intentionally skipped: it's unbounded per session
+    # (all drivers, high-frequency telemetry), which the API rejects with 422,
+    # and it's never loaded downstream -- FastF1 telemetry covers it.
+    # ponytail: fetch each endpoint independently so one bad response
+    # (422/404/etc.) skips just that table instead of aborting the whole backfill.
+    _try_save(openf1_client.get_laps, session_key, out_dir / "openf1_laps.parquet")
+    _try_save(openf1_client.get_stints, session_key, out_dir / "openf1_stints.parquet")
+    _try_save(openf1_client.get_pit, session_key, out_dir / "openf1_pit.parquet")
+    _try_save(openf1_client.get_weather, session_key, out_dir / "openf1_weather.parquet")
+    _try_save(openf1_client.get_race_control, session_key, out_dir / "openf1_race_control.parquet")
+
+
+def _try_save(fetch, session_key: int, path: Path) -> None:
+    """Fetch one OpenF1 endpoint and save it, skipping (not crashing) on any
+    request error so a single failing endpoint doesn't abort the backfill."""
+    try:
+        _save(fetch(session_key), path)
+    except requests.RequestException as exc:
+        logger.warning("skipping %s (OpenF1 request failed): %s", path.name, exc)
 
 
 def _lookup_openf1_session_key(
